@@ -30,8 +30,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # `pytest.ini` sets `pythonpath = src`, so `import kraken_ws` resolves without an
-# editable install. Running as a non-root user is good practice for CI images.
-RUN useradd --create-home --uid 1000 tester
+# editable install. Run as a non-root user (good practice for CI images) and give it
+# ownership of /app so pytest can write its cache without permission warnings.
+RUN useradd --create-home --uid 1000 tester && chown -R tester /app
 USER tester
 
 # Entry-point: run the suite. Any test failure -> non-zero exit -> failed pipeline.
