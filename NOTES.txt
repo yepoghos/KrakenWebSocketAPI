@@ -1,0 +1,113 @@
+KRAKEN WEBSOCKET API — TEST STRATEGY & RATIONALE (NOTES.txt)
+============================================================
+
+1. OBJECTIVE
+------------
+Treat the public Kraken WebSocket API as a legacy service with no existing tests and
+build a regression suite that captures its current, observable behaviour so that
+future refactors cannot silently break it. Correctness, clarity, and maintainability
+are prioritised over exhaustive coverage.
+
+Both protocol versions are targeted for breadth:
+  * v1: wss://ws.kraken.com          (JSON arrays, `event`-keyed control messages)
+  * v2: wss://ws.kraken.com/v2       (JSON objects, `channel`/`method` messages)
+
+
+2. WHAT THE TESTS VALIDATE (BEHAVIOURS & RISKS)
+-----------------------------------------------
+Connection / status (TC1–TC4)
+  * The endpoint accepts a connection and advertises system == "online".
+  * Heartbeats flow on an active subscription. Risk guarded: half-open/stale
+    connections that silently stop delivering data.
+
+Ticker — level 1 (TC5–TC9)
+  * Schema of the top-of-book snapshot.
+  * Spread invariant: best ask >= best bid (market not crossed at L1).
+  * Positivity of prices/volumes. Risk: corrupted or zeroed quotes.
+
+Book — level 2 (TC10–TC14)
+  * Snapshot schema (price/qty levels + checksum).
+  * Ordering: bids strictly descending, asks strictly ascending.
+  * "Never crossed" maintained while folding in live updates (best_bid < best_ask).
+  * CRC32 CHECKSUM RECONSTRUCTION: we maintain a local book and reproduce Kraken's
+    checksum byte-for-byte. This is the strongest correctness signal in the suite —
+    it proves our understanding of the update protocol AND that the feed is internally
+    consistent. Risk guarded: desynchronised/incorrect order-book deltas.
+
+OHLC — candles (TC15–TC18)
+  * Schema of both payload shapes.
+  * Candle invariants: high == max(open,high,low,close), low == min(...).
+  * Interval timestamps are non-decreasing across updates. Risk: out-of-order or
+    malformed candles.
+
+Trade (TC19–TC23)
+  * Schema of each trade.
+  * Economic sanity: side in {buy,sell} (v1: b/s), positive price/qty, known order
+    type. Risk: malformed or nonsensical trade prints.
+  * Timestamps non-decreasing within a batch. Risk: ordering guarantees downstream
+    consumers depend on.
+
+Subscription / input validation (TC24–TC28)
+  * Invalid symbol and invalid channel are rejected with an explicit error rather
+    than silence or a crash.
+  * Unsubscribe is acknowledged. Risk: broken subscription lifecycle / resource leaks.
+
+
+3. KEY ASSUMPTIONS
+------------------
+  * BTC/USD (v2) and XBT/USD (v1) are liquid enough to produce data within the
+    default 20s window during normal market hours. (v1 uses Kraken's internal
+    asset code XBT for bitcoin.)
+  * Absence of data is an ENVIRONMENTAL condition, not a defect: a quiet feed causes
+    a pytest SKIP, whereas a violated invariant causes a FAIL. This keeps the suite
+    from producing false negatives on a live exchange while still asserting hard on
+    correctness whenever data is present.
+  * Payloads may gain new fields over time; validators check the fields we care about
+    and tolerate additional keys, matching the "capture existing behaviour" goal.
+  * The book CRC32 always covers the top 10 levels regardless of subscribed depth
+    (per Kraken's documented algorithm), so tests subscribe at depth 10.
+
+
+4. DESIGN & TRADE-OFFS
+----------------------
+  * DEPENDENCIES: only `pytest` (test framework) and `websocket-client` (basic
+    protocol library) are used, as permitted. Everything else — schema validation,
+    CRC32 checksum, order-book maintenance, RFC3339 parsing — is built on the Python
+    standard library. In particular we deliberately DID NOT use `jsonschema`; small
+    hand-rolled validators keep the dependency surface minimal and give clear,
+    assertion-friendly error messages.
+
+  * PRECISION: the order-book checksum requires the EXACT decimal digits Kraken sends.
+    Binary floats would corrupt them, so the checksum client decodes JSON numbers as
+    `decimal.Decimal` (json.loads(parse_float=Decimal)). v1 already sends strings.
+
+  * ISOLATION: each test gets a fresh WebSocket connection via fixtures and closes it
+    on teardown. WebSocket subscriptions are stateful, so sharing a socket across
+    tests would couple them and invite order-dependent flakiness.
+
+  * DETERMINISM UNDER ASYNC FEEDS: the transport layer time-bounds every receive and
+    exposes a `collect(predicate, count, timeout)` primitive. Tests observe a bounded
+    number of messages instead of running unbounded, so they terminate predictably.
+
+  * CI OUTPUT: `pytest.ini` enables `-v -ra`, so each test prints PASS/FAIL/SKIP with
+    reasons and a summary — suitable for a pipeline log. The Docker entry-point runs
+    pytest and propagates the exit code.
+
+  * ABUSE BOUNDARY: per the brief, no denial-of-service / load / connection-flood
+    testing is performed. Input-validation tests send a single malformed request.
+
+
+5. POSSIBLE EXTENSIONS (NOT IMPLEMENTED, TIME-BOXED)
+---------------------------------------------------
+  * Reconnect/resume behaviour and sequence-gap detection on the book feed.
+  * Cross-symbol subscriptions and multi-symbol snapshot correctness.
+  * Recording real payloads as fixtures to add fast, offline unit tests alongside the
+    live integration tests (hybrid strategy).
+  * v2 `instrument` and v1 `spread` channels for additional coverage.
+
+
+6. HOW TO RUN
+-------------
+  Docker:  docker build -t kraken-ws-tests . && docker run --rm kraken-ws-tests
+  Local:   pip install -r requirements.txt && pytest
+  See README.md for marker-based selection and configuration.
