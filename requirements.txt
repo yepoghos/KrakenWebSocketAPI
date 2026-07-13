@@ -1,0 +1,11 @@
+# Runtime/test dependencies for the Kraken WebSocket QA suite.
+#
+# Per the assessment constraints, only two third-party packages are used:
+#   * pytest           - the test framework (explicitly permitted).
+#   * websocket-client - a *basic* WebSocket protocol library (explicitly permitted).
+# Everything else in this project is built on top of the Python standard library.
+#
+# Versions are pinned with a lower bound to keep the image reproducible while
+# still allowing security/patch updates.
+pytest>=8.0
+websocket-client>=1.7

@@ -1,0 +1,13 @@
+[project]
+name = "krakenwebsocketapi"
+version = "0.1.0"
+description = "QA automation test suite for the public Kraken WebSocket API (v1 and v2)."
+requires-python = ">=3.11"
+dependencies = [
+    "pytest>=8.0",
+    "websocket-client>=1.7",
+]
+
+# The suite is discovered via pytest.ini (which sets `pythonpath = src`), so no
+# packaging/build step is required to run the tests.
+

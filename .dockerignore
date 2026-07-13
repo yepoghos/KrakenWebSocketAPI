@@ -1,0 +1,8 @@
+# Files and directories that must never enter the Docker build context / image.
+.venv/
+.git/
+.idea/
+__pycache__/
+*.pyc
+.pytest_cache/
+QA_Pro_Assessment_Kraken.pdf
